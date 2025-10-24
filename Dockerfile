@@ -19,5 +19,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 # Comando para executar o bot
-CMD ["python3", "bot.py"]
+CMD python3 bot.py
+
 
