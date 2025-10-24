@@ -3,9 +3,8 @@
   "build": {
     "builder": "dockerfile"
   },
-    "deploy": {
+  "deploy": {
     "restartPolicyMaxRetries": 5,
     "restartPolicyWindowMs": 60000
   }
-
-
+}
