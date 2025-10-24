@@ -3,10 +3,9 @@
   "build": {
     "builder": "dockerfile"
   },
-  "deploy": {
-    "startCommand": "python3 bot.py",
+    "deploy": {
     "restartPolicyMaxRetries": 5,
     "restartPolicyWindowMs": 60000
   }
-}
+
 
