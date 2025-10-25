@@ -1,14 +1,12 @@
 """
-Bot Telegram para Estatísticas e Probabilidades de Futebol
-Fornece previsões de jogos para auxiliar em apostas esportivas
+Bot principal do Telegram para estatísticas e probabilidades de futebol.
 """
 
 import logging
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler
-from datetime import datetime, timedelta
 import asyncio
-from config import TELEGRAM_BOT_TOKEN
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+from config import TELEGRAM_BOT_TOKEN, LEAGUES_OF_INTEREST
 from scraper import FootballScraper
 
 # Configurar logging
@@ -18,264 +16,169 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Instância global do scraper
+# Inicializa o scraper
 scraper = FootballScraper()
 
+# --- Comandos do Bot ---
 
-class FootballBotHandler:
-    """Classe para gerenciar os handlers do bot"""
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Envia uma mensagem de boas-vindas quando o comando /start é emitido."""
+    user = update.effective_user
+    welcome_message = (
+        f"Olá, {user.mention_html()}! 👋\n\n"
+        "Eu sou o seu Bot de Estatísticas de Futebol. Meu objetivo é te ajudar com análises e probabilidades para apostas esportivas.\n\n"
+        "Use os comandos abaixo:\n"
+        "⚽ /jogos - Lista os jogos de hoje.\n"
+        "📈 /probabilidades - Mostra as probabilidades de vitória para os jogos.\n"
+        "🏆 /ligas - Seleciona suas ligas favoritas.\n"
+        "❓ /ajuda - Exibe esta mensagem de ajuda."
+    )
+    await update.message.reply_html(welcome_message)
+
+async def matches_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Lista os jogos de hoje."""
+    await update.message.reply_text("Buscando jogos de hoje...")
     
-    def __init__(self):
-        self.scraper = FootballScraper()
-        self.user_preferences = {}  # Armazenar preferências de ligas por usuário
+    matches = scraper.get_today_matches()
     
-    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Comando /start - Mensagem de boas-vindas"""
-        user_id = update.effective_user.id
-        user_name = update.effective_user.first_name
-        
-        welcome_message = f"""
-🎯 *Bem-vindo ao Bot de Futebol!* 🎯
+    if not matches:
+        await update.message.reply_text("Nenhum jogo encontrado para hoje. Tente novamente mais tarde.")
+        return
 
-Olá {user_name}! 👋
-
-Sou seu assistente de estatísticas e probabilidades de futebol. 
-Estou aqui para ajudar você com previsões de jogos e análises para suas apostas! ⚽
-
-*Comandos disponíveis:*
-
-/jogos - Ver todos os jogos de hoje
-/probabilidades - Ver probabilidades de vitória
-/ligas - Selecionar ligas de interesse
-/ajuda - Obter ajuda
-/sobre - Informações sobre o bot
-
-Escolha um comando acima para começar! 🚀
-        """
-        
-        await update.message.reply_text(welcome_message, parse_mode='Markdown')
-        logger.info(f"Usuário {user_id} iniciou o bot")
+    response = "*Jogos de Hoje:*\n\n"
     
-    async def jogos(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Comando /jogos - Listar todos os jogos de hoje"""
-        try:
-            await update.message.reply_text("🔄 Buscando jogos de hoje... Por favor, aguarde.", parse_mode='Markdown')
-            
-            matches = self.scraper.get_today_matches()
-            
-            if not matches:
-                await update.message.reply_text(
-                    "❌ Desculpe, não consegui encontrar jogos de hoje no momento.\n"
-                    "Tente novamente mais tarde.",
-                    parse_mode='Markdown'
-                )
-                return
-            
-            # Agrupar jogos por liga
-            matches_by_league = {}
-            for match in matches:
-                league = match.get('league', 'Sem Liga')
-                if league not in matches_by_league:
-                    matches_by_league[league] = []
-                matches_by_league[league].append(match)
-            
-            # Enviar mensagens por liga
-            for league, league_matches in list(matches_by_league.items())[:5]:  # Limitar a 5 ligas
-                message = f"🏆 *{league}*\n\n"
-                for match in league_matches[:3]:  # Limitar a 3 jogos por liga
-                    message += f"⚽ {match.get('home_team', 'Time A')} vs {match.get('away_team', 'Time B')}\n"
-                    if match.get('time'):
-                        message += f"🕐 {match['time']}\n"
-                    message += "\n"
-                
-                await update.message.reply_text(message, parse_mode='Markdown')
-                await asyncio.sleep(0.5)  # Pequeno delay entre mensagens
-            
-            logger.info(f"Usuário {update.effective_user.id} consultou jogos de hoje")
+    current_league = ""
+    for match in matches:
+        if match['league'] != current_league:
+            current_league = match['league']
+            response += f"\n🏆 *{current_league}*\n"
         
-        except Exception as e:
-            logger.error(f"Erro ao listar jogos: {str(e)}")
-            await update.message.reply_text(
-                "❌ Ocorreu um erro ao buscar os jogos. Tente novamente.",
-                parse_mode='Markdown'
-            )
+        response += f"  - {match['home_team']} vs {match['away_team']} ({match['time']})\n"
+
+    await update.message.reply_markdown_v2(response)
+
+async def probability_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Mostra as probabilidades de vitória."""
+    await update.message.reply_text("Calculando probabilidades para os jogos de hoje...")
     
-    async def probabilidades(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Comando /probabilidades - Mostrar probabilidades de vitória"""
-        try:
-            await update.message.reply_text("🔄 Calculando probabilidades... Por favor, aguarde.", parse_mode='Markdown')
-            
-            predictions = self.scraper.get_match_predictions()
-            
-            if not predictions:
-                await update.message.reply_text(
-                    "❌ Desculpe, não consegui calcular probabilidades no momento.",
-                    parse_mode='Markdown'
-                )
-                return
-            
-            # Enviar as 5 melhores previsões
-            for idx, match in enumerate(predictions[:5], 1):
-                formatted_message = self.scraper.format_match_for_telegram(match)
-                await update.message.reply_text(formatted_message, parse_mode='Markdown')
-                await asyncio.sleep(0.5)
-            
-            logger.info(f"Usuário {update.effective_user.id} consultou probabilidades")
-        
-        except Exception as e:
-            logger.error(f"Erro ao calcular probabilidades: {str(e)}")
-            await update.message.reply_text(
-                "❌ Ocorreu um erro ao calcular as probabilidades. Tente novamente.",
-                parse_mode='Markdown'
-            )
+    predictions = scraper.get_match_predictions()
     
-    async def ligas(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Comando /ligas - Selecionar ligas de interesse"""
-        keyboard = [
-            [InlineKeyboardButton("Premier League", callback_data='liga_premier')],
-            [InlineKeyboardButton("LaLiga", callback_data='liga_laliga')],
-            [InlineKeyboardButton("Serie A", callback_data='liga_seriea')],
-            [InlineKeyboardButton("Bundesliga", callback_data='liga_bundesliga')],
-            [InlineKeyboardButton("Ligue 1", callback_data='liga_ligue1')],
-            [InlineKeyboardButton("Campeonato Brasileiro", callback_data='liga_brasileirao')],
-        ]
+    if not predictions:
+        await update.message.reply_text("Não foi possível calcular as probabilidades. Verifique se há jogos hoje ou se a fonte de dados está disponível.")
+        return
+
+    response = "*Probabilidades de Vitória:*\n\n"
+    
+    current_league = ""
+    for pred in predictions:
+        if pred['league'] != current_league:
+            current_league = pred['league']
+            response += f"\n🏆 *{current_league}*\n"
         
-        reply_markup = InlineKeyboardMarkup(keyboard)
+        prob = pred['probability']
         
-        await update.message.reply_text(
-            "🏆 *Selecione as ligas de seu interesse:*",
-            reply_markup=reply_markup,
-            parse_mode='Markdown'
+        # Determina o time com a maior probabilidade (excluindo empate)
+        if prob['home_win'] > prob['away_win']:
+            winner = pred['home_team']
+            win_prob = prob['home_win']
+        else:
+            winner = pred['away_team']
+            win_prob = prob['away_win']
+            
+        response += (
+            f"  - {pred['home_team']} vs {pred['away_team']} ({pred['time']})\n"
+            f"    *Tendência:* {winner} ({win_prob}%)\n"
+            f"    *Confiança:* {prob['confidence'].upper()}\n"
         )
-    
-    async def ajuda(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Comando /ajuda - Mostrar ajuda"""
-        help_text = """
-*📚 Ajuda do Bot*
-
-Este bot fornece estatísticas e probabilidades de jogos de futebol para auxiliar em apostas.
-
-*Como usar:*
-
-1. **/jogos** - Veja todos os jogos de hoje
-2. **/probabilidades** - Veja as probabilidades de vitória
-3. **/ligas** - Selecione suas ligas favoritas
-4. **/sobre** - Informações sobre o bot
-
-*Informações importantes:*
-
-⚠️ As probabilidades são baseadas em dados públicos e análises estatísticas.
-⚠️ Não garantimos 100% de precisão nas previsões.
-⚠️ Use este bot apenas para fins informativos.
-⚠️ Aposte responsavelmente!
-
-*Dúvidas?*
-Entre em contato com o desenvolvedor através do repositório do projeto.
-        """
         
-        await update.message.reply_text(help_text, parse_mode='Markdown')
+    await update.message.reply_markdown_v2(response)
+
+
+async def leagues_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Permite selecionar ligas favoritas (funcionalidade simplificada)."""
+    leagues_list = "\n".join([f"- {league}" for league in LEAGUES_OF_INTEREST])
+    response = (
+        "*Ligas Atuais Monitoradas:*\n\n"
+        f"{leagues_list}\n\n"
+        "Para adicionar ou remover ligas, você precisará editar o arquivo `config.py` no repositório do GitHub e fazer um novo deploy."
+    )
+    await update.message.reply_markdown_v2(response)
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Exibe a mensagem de ajuda."""
+    await start_command(update, context)
+
+async def about_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Informações sobre o bot."""
+    response = (
+        "*Sobre o Bot:*\n\n"
+        "Desenvolvido por Manus AI.\n"
+        "Versão: 1.0.0\n"
+        "Este bot usa dados de fontes públicas (simuladas) para calcular probabilidades de jogos de futebol.\n\n"
+        "Lembre-se: Use para fins informativos e aposte com responsabilidade."
+    )
+    await update.message.reply_markdown_v2(response)
+
+# --- Tratamento de Erros ---
+
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Loga o erro e envia uma mensagem de erro para o usuário."""
+    logger.error("Exceção capturada:", exc_info=context.error)
     
-    async def sobre(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Comando /sobre - Informações sobre o bot"""
-        about_text = """
-*ℹ️ Sobre o Bot de Futebol*
+    if update and update.effective_message:
+        await update.effective_message.reply_text(
+            "Ocorreu um erro interno. Por favor, tente novamente mais tarde ou use o comando /ajuda."
+        )
 
-*Versão:* 1.0.0
-*Desenvolvido por:* Manus AI
-*Data de criação:* 2025
+# --- Função Principal ---
 
-*Funcionalidades:*
-✅ Estatísticas de jogos de futebol
-✅ Cálculo de probabilidades
-✅ Suporte a múltiplas ligas
-✅ Interface amigável no Telegram
-
-*Fonte de dados:*
-Os dados são coletados de fontes públicas através de web scraping.
-
-*Aviso Legal:*
-Este bot é fornecido "como está" e não oferece garantias de precisão.
-Use por sua conta e risco!
-        """
-        
-        await update.message.reply_text(about_text, parse_mode='Markdown')
-    
-    async def handle_league_selection(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handler para seleção de ligas"""
-        query = update.callback_query
-        await query.answer()
-        
-        user_id = query.from_user.id
-        league_map = {
-            'liga_premier': 'Premier League',
-            'liga_laliga': 'LaLiga',
-            'liga_seriea': 'Serie A',
-            'liga_bundesliga': 'Bundesliga',
-            'liga_ligue1': 'Ligue 1',
-            'liga_brasileirao': 'Campeonato Brasileiro',
-        }
-        
-        selected_league = league_map.get(query.data)
-        if selected_league:
-            if user_id not in self.user_preferences:
-                self.user_preferences[user_id] = []
-            
-            if selected_league not in self.user_preferences[user_id]:
-                self.user_preferences[user_id].append(selected_league)
-                await query.edit_message_text(
-                    f"✅ {selected_league} adicionada às suas preferências!"
-                )
-            else:
-                await query.edit_message_text(
-                    f"ℹ️ {selected_league} já está nas suas preferências!"
-                )
-    
-    async def error_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        """Handler de erros"""
-        logger.error(f"Erro no bot: {context.error}")
-        if update and update.message:
-            await update.message.reply_text(
-                "❌ Ocorreu um erro. Tente novamente mais tarde.",
-                parse_mode='Markdown'
-            )
-
-
-async def main():
-    """Função principal para iniciar o bot"""
-    logger.info("Iniciando Bot de Futebol...")
-    
-    # Criar aplicação
+# A função main() foi modificada para usar run_polling()
+async def main() -> None:
+    """Inicia o bot usando o método run_polling para compatibilidade com o Railway."""
+    # Cria o ApplicationBuilder
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+
+    # Adiciona os Handlers
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("jogos", matches_command))
+    application.add_handler(CommandHandler("probabilidades", probability_command))
+    application.add_handler(CommandHandler("ligas", leagues_command))
+    application.add_handler(CommandHandler("ajuda", help_command))
+    application.add_handler(CommandHandler("sobre", about_command))
+
+    # Adiciona o Handler de erros
+    application.add_error_handler(error_handler)
+
+    logger.info("Bot iniciado com sucesso! Aguardando mensagens...")
     
-    # Instanciar handler
-    handler = FootballBotHandler()
-    
-    # Registrar handlers de comandos
-    application.add_handler(CommandHandler("start", handler.start))
-    application.add_handler(CommandHandler("jogos", handler.jogos))
-    application.add_handler(CommandHandler("probabilidades", handler.probabilidades))
-    application.add_handler(CommandHandler("ligas", handler.ligas))
-    application.add_handler(CommandHandler("ajuda", handler.ajuda))
-    application.add_handler(CommandHandler("sobre", handler.sobre))
-    
-    # Registrar handler de callbacks
-    application.add_handler(CallbackQueryHandler(handler.handle_league_selection))
-    
-    # Registrar handler de erros
-    application.add_error_handler(handler.error_handler)
-    
-    logger.info("Bot iniciado com sucesso!")
-    logger.info("Aguardando mensagens...")
-    
-    # Iniciar o bot
-    await application.run_polling()
+    # Usa run_polling() para iniciar o bot de forma síncrona,
+    # o que é mais compatível com o ambiente do Railway/Docker
+    application.run_polling(poll_interval=1.0)
 
 
 if __name__ == '__main__':
+    # A função main é chamada de forma síncrona para iniciar o bot
+    # O run_polling() dentro de main() gerencia o loop de eventos
     try:
-        asyncio.run(main())
-    except KeyboardInterrupt:
-        logger.info("Bot interrompido pelo usuário")
-    except Exception as e:
-        logger.error(f"Erro fatal: {str(e)}")
+        # Cria o ApplicationBuilder
+        application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
 
+        # Adiciona os Handlers
+        application.add_handler(CommandHandler("start", start_command))
+        application.add_handler(CommandHandler("jogos", matches_command))
+        application.add_handler(CommandHandler("probabilidades", probability_command))
+        application.add_handler(CommandHandler("ligas", leagues_command))
+        application.add_handler(CommandHandler("ajuda", help_command))
+        application.add_handler(CommandHandler("sobre", about_command))
+
+        # Adiciona o Handler de erros
+        application.add_error_handler(error_handler)
+
+        logger.info("Bot iniciado com sucesso! Aguardando mensagens...")
+        
+        # Usa run_polling() para iniciar o bot de forma síncrona,
+        # o que é mais compatível com o ambiente do Railway/Docker
+        application.run_polling(poll_interval=1.0)
+        
+    except Exception as e:
+        logger.error(f"Erro fatal na inicialização do bot: {str(e)}")
